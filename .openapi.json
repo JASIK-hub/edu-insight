@@ -1,0 +1,162 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "EduInsight frontend API",
+    "version": "1.0.0",
+    "description": "Frontend contract for CSV upload, analytics, curriculum optimization and recommendation analysis. Dashboard scores are percentages; curriculum mastery is a ratio from 0 to 1."
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Service health",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HealthOut"}}}
+          }
+        }
+      }
+    },
+    "/api/datasets/upload": {
+      "post": {
+        "operationId": "upload_dataset",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {"file": {"type": "string", "format": "binary", "description": "UTF-8 CSV file"}}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Dataset persisted", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DatasetOut"}}}},
+          "413": {"$ref": "#/components/responses/Error"},
+          "422": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/datasets": {
+      "get": {
+        "operationId": "list_datasets",
+        "responses": {
+          "200": {"description": "Datasets", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DatasetListOut"}}}}
+        }
+      }
+    },
+    "/api/datasets/{dataset_id}/analytics": {
+      "get": {
+        "operationId": "get_dataset_analytics",
+        "parameters": [
+          {"name": "dataset_id", "in": "path", "required": true, "schema": {"type": "integer"}},
+          {"name": "grade", "in": "query", "required": false, "schema": {"type": "integer"}},
+          {"name": "subject", "in": "query", "required": false, "schema": {"type": "string"}},
+          {"name": "textbook", "in": "query", "required": false, "schema": {"type": "string"}},
+          {"name": "topic", "in": "query", "required": false, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"description": "Chart-ready analytics", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DatasetAnalyticsOut"}}}},
+          "404": {"$ref": "#/components/responses/Error"},
+          "422": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/datasets/{dataset_id}/status": {
+      "get": {
+        "operationId": "get_dataset_status",
+        "parameters": [{"name": "dataset_id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "responses": {
+          "200": {"description": "Dataset processing status", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DatasetStatusOut"}}}},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/datasets/{dataset_id}/report": {
+      "get": {
+        "operationId": "get_dataset_report",
+        "parameters": [{"name": "dataset_id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "responses": {
+          "200": {"description": "Stored completed report", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/StoredReportOut"}}}},
+          "404": {"$ref": "#/components/responses/Error"},
+          "409": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/curriculum/optimize": {
+      "post": {
+        "operationId": "optimize_curriculum",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/OptimizeRequest"}, "example": {"dataset_id": 3, "current_hours": {"Algebra": 8, "Geometry": 6}, "minimum_hours": 3, "max_change_per_topic": 4, "weak_threshold": 0.6}}}},
+        "responses": {
+          "200": {"description": "Backend-calculated hour allocation", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/OptimizeOut"}}}},
+          "404": {"$ref": "#/components/responses/Error"},
+          "422": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/recommendations/analyze": {
+      "post": {
+        "operationId": "analyze_recommendations",
+        "description": "Use the complete response from /api/curriculum/optimize as optimization. Omit optimization if no hour allocation is available.",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AnalysisRequest"}, "example": {"dataset_id": 3, "language": "ru", "optimization": {"dataset_id": 3, "total_hours": 14, "allocations": [{"topic": "Algebra", "current_hours": 8, "recommended_hours": 11, "change": 3, "mastery": 0.45, "priority": 0.55}, {"topic": "Geometry", "current_hours": 6, "recommended_hours": 3, "change": -3, "mastery": 0.8, "priority": 0.2}], "method": "Deterministic priority-weighted hour transfer; priority = 1 - mastery"}, "data_quality": {}}}}},
+        "responses": {
+          "200": {"description": "Validated educational report", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/EduInsightAnalysisResponse"}}}},
+          "404": {"$ref": "#/components/responses/Error"},
+          "409": {"$ref": "#/components/responses/Error"},
+          "422": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    }
+  },
+  "components": {
+    "responses": {
+      "Error": {"description": "Request error", "content": {"application/json": {"schema": {"type": "object", "required": ["detail"], "properties": {"detail": {}}}}}}
+    },
+    "schemas": {
+      "HealthOut": {"type": "object", "required": ["status", "database"], "properties": {"status": {"const": "ok"}, "database": {"enum": ["ok", "unavailable"]}}},
+      "DatasetOut": {"type": "object", "required": ["id", "dataset_id", "filename", "row_count", "created_at", "status"], "properties": {"id": {"type": "integer"}, "dataset_id": {"type": "integer"}, "filename": {"type": "string"}, "row_count": {"type": "integer"}, "created_at": {"type": "string", "format": "date-time"}, "status": {"$ref": "#/components/schemas/DatasetStatus"}}},
+      "DatasetListOut": {"type": "object", "required": ["datasets"], "properties": {"datasets": {"type": "array", "items": {"$ref": "#/components/schemas/DatasetOut"}}}},
+      "DatasetStatus": {"type": "string", "enum": ["uploaded", "processing", "completed", "failed"]},
+      "DatasetStatusOut": {"type": "object", "required": ["dataset_id", "status", "report_id"], "properties": {"dataset_id": {"type": "integer"}, "status": {"$ref": "#/components/schemas/DatasetStatus"}, "report_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]}}},
+      "DatasetAnalyticsOut": {
+        "type": "object",
+        "required": ["dataset_id", "generated_at", "overview", "topic_mastery", "performance_trend", "score_distribution", "textbook_comparison", "topic_performance", "data_quality_warnings", "available_filters"],
+        "properties": {
+          "dataset_id": {"type": "integer"},
+          "generated_at": {"type": "string", "format": "date-time"},
+          "overview": {"$ref": "#/components/schemas/DashboardOverview"},
+          "topic_mastery": {"type": "array", "items": {"$ref": "#/components/schemas/TopicMasteryPoint"}},
+          "performance_trend": {"type": "array", "items": {"$ref": "#/components/schemas/PerformanceTrendPoint"}},
+          "score_distribution": {"type": "array", "items": {"$ref": "#/components/schemas/ScoreDistributionPoint"}},
+          "textbook_comparison": {"type": "array", "items": {"$ref": "#/components/schemas/TextbookComparisonPoint"}},
+          "topic_performance": {"type": "array", "items": {"$ref": "#/components/schemas/TopicPerformancePoint"}},
+          "data_quality_warnings": {"type": "array", "items": {"type": "string"}},
+          "available_filters": {"$ref": "#/components/schemas/DashboardFilters"}
+        }
+      },
+      "DashboardOverview": {"type": "object", "required": ["total_students", "average_score", "total_topics", "critical_topics"], "properties": {"total_students": {"type": "integer"}, "average_score": {"anyOf": [{"type": "number"}, {"type": "null"}]}, "total_topics": {"type": "integer"}, "critical_topics": {"type": "integer"}}},
+      "TopicMasteryPoint": {"type": "object", "required": ["topic", "score", "student_count"], "properties": {"topic": {"type": "string"}, "score": {"type": "number"}, "student_count": {"type": "integer"}}},
+      "PerformanceTrendPoint": {"type": "object", "required": ["assessment_date", "score", "student_count"], "properties": {"assessment_date": {"type": "string", "format": "date"}, "score": {"type": "number"}, "student_count": {"type": "integer"}}},
+      "ScoreDistributionPoint": {"type": "object", "required": ["score_range", "students_count"], "properties": {"score_range": {"type": "string"}, "students_count": {"type": "integer"}}},
+      "TextbookComparisonPoint": {"type": "object", "required": ["textbook", "topic", "average_score", "student_count"], "properties": {"textbook": {"type": "string"}, "topic": {"type": "string"}, "average_score": {"type": "number"}, "student_count": {"type": "integer"}}},
+      "TopicPerformancePoint": {"type": "object", "required": ["topic", "correct_answers", "incorrect_answers"], "properties": {"topic": {"type": "string"}, "correct_answers": {"type": "integer"}, "incorrect_answers": {"type": "integer"}}},
+      "DashboardFilters": {"type": "object", "required": ["grades", "subjects", "textbooks", "topics"], "properties": {"grades": {"type": "array", "items": {"type": "integer"}}, "subjects": {"type": "array", "items": {"type": "string"}}, "textbooks": {"type": "array", "items": {"type": "string"}}, "topics": {"type": "array", "items": {"type": "string"}}}},
+      "OptimizeRequest": {"type": "object", "required": ["current_hours"], "properties": {"dataset_id": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": null}, "current_hours": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "integer", "minimum": 0}, "description": "Keys must be actual topic names in the selected dataset."}, "minimum_hours": {"type": "integer", "minimum": 0, "default": 1}, "max_change_per_topic": {"type": "integer", "minimum": 0, "default": 4}, "weak_threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.6}}},
+      "HourAllocation": {"type": "object", "required": ["topic", "current_hours", "recommended_hours", "change", "mastery", "priority"], "properties": {"topic": {"type": "string"}, "current_hours": {"type": "integer"}, "recommended_hours": {"type": "integer"}, "change": {"type": "integer"}, "mastery": {"type": "number", "minimum": 0, "maximum": 1}, "priority": {"type": "number", "minimum": 0, "maximum": 1}}},
+      "OptimizeOut": {"type": "object", "required": ["dataset_id", "total_hours", "allocations", "method"], "properties": {"dataset_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]}, "total_hours": {"type": "integer"}, "allocations": {"type": "array", "items": {"$ref": "#/components/schemas/HourAllocation"}}, "method": {"type": "string"}}},
+      "AnalysisRequest": {"type": "object", "properties": {"dataset_id": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": null}, "language": {"type": "string", "enum": ["en", "ru", "kk"], "default": "ru"}, "school_context": {"anyOf": [{"type": "string", "maxLength": 2000}, {"type": "null"}], "default": null}, "optimization": {"anyOf": [{"$ref": "#/components/schemas/OptimizeOut"}, {"type": "null"}], "default": null}, "data_quality": {"type": "object", "additionalProperties": true, "default": {}}}},
+      "EduInsightAnalysisResponse": {"type": "object", "required": ["executive_summary", "key_findings", "topic_analysis", "textbook_analysis", "curriculum_explanation", "recommendations", "limitations", "data_quality_warnings", "generated_language"], "properties": {"executive_summary": {"$ref": "#/components/schemas/AnalysisSummary"}, "key_findings": {"type": "array", "items": {"$ref": "#/components/schemas/AnalysisFinding"}}, "topic_analysis": {"type": "array", "items": {"$ref": "#/components/schemas/AnalysisTopic"}}, "textbook_analysis": {"type": "array", "items": {"$ref": "#/components/schemas/AnalysisTextbook"}}, "curriculum_explanation": {"$ref": "#/components/schemas/AnalysisCurriculum"}, "recommendations": {"type": "array", "items": {"$ref": "#/components/schemas/AnalysisRecommendation"}}, "limitations": {"type": "array", "items": {"type": "string"}}, "data_quality_warnings": {"type": "array", "items": {"type": "string"}}, "generated_language": {"type": "string", "enum": ["en", "ru", "kk"]}}},
+      "AnalysisSummary": {"type": "object", "required": ["title", "summary", "overall_status", "key_findings_count"], "properties": {"title": {"type": "string"}, "summary": {"type": "string"}, "overall_status": {"type": "string", "enum": ["needs_attention", "satisfactory", "insufficient_data"]}, "key_findings_count": {"type": "integer"}}},
+      "AnalysisEvidence": {"type": "object", "required": ["metric", "value"], "properties": {"metric": {"type": "string"}, "value": {}, "unit": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null}}},
+      "AnalysisFinding": {"type": "object", "required": ["id", "title", "description", "severity", "topic", "evidence"], "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "description": {"type": "string"}, "severity": {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]}, "topic": {"anyOf": [{"type": "string"}, {"type": "null"}]}, "evidence": {"type": "array", "items": {"$ref": "#/components/schemas/AnalysisEvidence"}}}},
+      "AnalysisTopic": {"type": "object", "required": ["topic", "status", "interpretation", "main_concern"], "properties": {"topic": {"type": "string"}, "status": {"type": "string", "enum": ["critical", "needs_attention", "satisfactory"]}, "interpretation": {"type": "string"}, "main_concern": {"anyOf": [{"type": "string"}, {"type": "null"}]}}},
+      "AnalysisTextbook": {"type": "object", "required": ["textbook", "observation", "confidence", "limitations"], "properties": {"textbook": {"type": "string"}, "observation": {"type": "string"}, "confidence": {"type": "string", "enum": ["limited", "moderate"], "default": "limited"}, "limitations": {"type": "array", "items": {"type": "string"}}}},
+      "AnalysisHourExplanation": {"type": "object", "required": ["topic", "current_hours", "recommended_hours", "reason"], "properties": {"topic": {"type": "string"}, "current_hours": {"type": "integer"}, "recommended_hours": {"type": "integer"}, "reason": {"type": "string"}}},
+      "AnalysisCurriculum": {"type": "object", "required": ["summary", "total_hours_preserved", "topic_explanations"], "properties": {"summary": {"type": "string"}, "total_hours_preserved": {"anyOf": [{"type": "boolean"}, {"type": "null"}]}, "topic_explanations": {"type": "array", "items": {"$ref": "#/components/schemas/AnalysisHourExplanation"}}}},
+      "AnalysisRecommendation": {"type": "object", "required": ["id", "title", "priority", "action", "related_topics", "evidence"], "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "priority": {"type": "string", "enum": ["high", "medium", "low"]}, "action": {"type": "string"}, "related_topics": {"type": "array", "items": {"type": "string"}}, "evidence": {"type": "array", "items": {"type": "string"}}}},
+      "StoredReportOut": {"type": "object", "required": ["id", "dataset_id", "status", "report", "created_at"], "properties": {"id": {"type": "integer"}, "dataset_id": {"type": "integer"}, "status": {"const": "completed"}, "report": {"$ref": "#/components/schemas/EduInsightAnalysisResponse"}, "created_at": {"type": "string", "format": "date-time"}}}
+    }
+  }
+}
