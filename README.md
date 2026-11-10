@@ -61,4 +61,14 @@ cd backend
 py -m unittest discover -s tests -v
 ```
 
+## Deploy on Render
+
+The repository includes [`render.yaml`](render.yaml). For an existing Render web service, set the **Build Command** to `pip install -r requirements.txt` and the **Start Command** to:
+
+```bash
+python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT
+```
+
+Set the health check path to `/api/health`. Add `DATABASE_URL` in Render's environment settings; add `OPENAI_API_KEY` only if OpenRouter is enabled. Run `cd backend && python -m alembic upgrade head` before using a new database. The Render start command must not include `--reload`.
+
 The API is a modular FastAPI monolith: `storage`, `analytics`, `curriculum`, and `explanations` live under `backend/app/`. PostgreSQL migrations live under `backend/alembic/`. Read the [architecture](docs/architecture.md), [API contract](docs/api-contract.md), and [workflow](docs/workflow.md) for integration details.
