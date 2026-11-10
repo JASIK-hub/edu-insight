@@ -1,0 +1,13 @@
+student_id,topic,textbook,score,max_score,assessment_date,class_id,grade
+s001,Algebra,Textbook A,4,10,2026-09-10,8A,8
+s002,Algebra,Textbook A,5,10,2026-09-10,8A,8
+s003,Algebra,Textbook B,7,10,2026-09-10,8B,8
+s004,Algebra,Textbook B,6,10,2026-09-10,8B,8
+s001,Geometry,Textbook A,8,10,2026-09-17,8A,8
+s002,Geometry,Textbook A,9,10,2026-09-17,8A,8
+s003,Geometry,Textbook B,7,10,2026-09-17,8B,8
+s004,Geometry,Textbook B,8,10,2026-09-17,8B,8
+s001,Statistics,Textbook A,5,10,2026-09-24,8A,8
+s002,Statistics,Textbook A,6,10,2026-09-24,8A,8
+s003,Statistics,Textbook B,6,10,2026-09-24,8B,8
+s004,Statistics,Textbook B,7,10,2026-09-24,8B,8
