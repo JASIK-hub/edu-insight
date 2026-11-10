@@ -1,0 +1,7 @@
+# Data dictionary
+
+CSV is UTF-8, with one assessment observation per row. Required columns: `student_id`, `topic`, `textbook`, `score`, `max_score`. Optional columns: `assessment_date` (ISO date), `class_id`, `grade` (integer). Header names are exact and case sensitive. `score` and `max_score` are finite numbers, `max_score > 0`, and `0 <= score <= max_score`. `student_id`, `topic`, and `textbook` are nonempty strings. Reject malformed files with 422; do not partially ingest. A dataset records `id`, `filename`, `row_count`, `created_at`.
+
+Mastery is the ratio `sum(score) / sum(max_score)` for a topic, bounded 0 to 1. A weak topic has mastery below `weak_threshold` (default 0.6). Textbook comparison groups observations by textbook and uses the same weighted score ratio. These are descriptive associations, not causal textbook effects. `sample_size` is the number of observations. `student_count` counts distinct student IDs. Results are sorted by mastery ascending, then name ascending. Dataset selection defaults to the newest dataset when omitted. An empty catalog yields empty results.
+
+Curriculum hours are nonnegative integers. `current_hours` maps topic names to current hours. Optimization preserves total hours and each topic's minimum hours. Topics with lower mastery receive higher priority; the objective and tie breaking must be deterministic. Simulation reports projected mastery using a disclosed simple response curve, capped to 0–1; it is a scenario estimate, not a causal prediction.
