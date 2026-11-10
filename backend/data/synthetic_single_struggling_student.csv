@@ -1,0 +1,4 @@
+student_id,topic,textbook,score,max_score,assessment_date,class_id,grade
+s001,Algebra,Textbook A,2,10,2026-09-10,8A,8
+s001,Geometry,Textbook A,3,10,2026-09-17,8A,8
+s001,Statistics,Textbook A,2,10,2026-09-24,8A,8
