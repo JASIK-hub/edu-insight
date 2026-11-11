@@ -1,74 +1,148 @@
-# EduInsight
+# EDU-Insight Backend
 
-**Educational analytics and curriculum decision support.** Upload assessment results, inspect topic and textbook patterns, calculate a constrained teaching-hours allocation, and generate a Russian, English, or Kazakh report. All scores and hour allocations are calculated by the backend; OpenRouter can only select approved recommendation actions.
+### From assessment CSVs to a teaching plan with a fixed hour budget.
 
-## What works
+The EDU-Insight API validates assessment uploads, computes performance by topic, and recommends how to redistribute the teaching hours an educator already has. A structured report connects the recommendation to the available evidence and its limitations.
 
-- CSV upload to PostgreSQL with validation and a stable `dataset_id`.
-- Dashboard-ready analytics for KPIs, topic mastery, dated trends, score distribution, and textbook comparisons.
-- Curriculum optimization and a what-if simulator.
-- Stored, retry-safe reports with deterministic fallback when OpenRouter is unavailable.
-- FastAPI interactive docs at `/docs` and a frontend contract in [`.openapi.json`](.openapi.json).
+**[Backend repository](https://github.com/JASIK-hub/edu-insight) · [API docs](https://edu-insight-bciy.onrender.com/docs) · [OpenAPI contract](https://github.com/vcffff/edu-insight/blob/main/openapi.json) · [Frontend](https://github.com/vcffff/edu-insight) · [Demo CSV](https://github.com/vcffff/edu-insight/blob/main/docs/samples/single-student.csv)**
 
-## Quick start
+## The problem
 
-**Requirements:** Python 3.12+, a Neon PostgreSQL database, and Git. An OpenRouter key is optional.
+An overall assessment average can hide gaps in specific topics. Even when those gaps are visible, educators still have to decide where to move teaching time without exceeding the hours already allocated.
 
-```bash
+## How it works
+
+| Step | Backend responsibility |
+| --- | --- |
+| **Upload** | Accept a UTF-8 CSV as multipart form data and expose the dataset ID and processing status. |
+| **Analyze** | Calculate overview metrics, topic performance, trends, score distributions and textbook comparisons where the dataset supports them. |
+| **Plan** | Use educator-supplied hours and topic mastery to propose a redistribution within the same total budget. |
+| **Explain** | Return a structured report with findings, evidence, recommendations and limitations. The report can include the latest optimization result. |
+
+Dashboard scores use percentages. The optimizer uses mastery ratios from **0 to 1**. For example, **60%** is **0.6** in an optimization request.
+
+## API routes
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| GET | `/api/health` | Check service health. |
+| POST | `/api/datasets/upload` | Upload a CSV using multipart field `file`. |
+| GET | `/api/datasets` | List datasets. |
+| GET | `/api/datasets/{dataset_id}/status` | Check processing status. |
+| GET | `/api/datasets/{dataset_id}/analytics` | Read analytics with optional `grade`, `subject`, `textbook` and `topic` filters. |
+| GET | `/api/datasets/{dataset_id}/report` | Retrieve the stored report for a dataset. |
+| POST | `/api/curriculum/optimize` | Calculate recommended teaching hours. |
+| POST | `/api/recommendations/analyze` | Generate an evidence-led report for a dataset. |
+
+## Run locally
+
+**Requirements:** Python 3.12+ and PostgreSQL. The project provides a Neon configuration template.
+
+From the repository root in PowerShell:
+
+```powershell
 cd backend
 py -m pip install -r requirements.txt
-cp .env.example .env
+Copy-Item .env.example .env
 ```
 
-Edit `backend/.env` and set `DATABASE_URL` to your **Neon direct connection URL**. Set `OPENAI_API_KEY` to your OpenRouter key if you want AI-assisted action selection. Keep the key on the backend only. The example file already sets `OPENAI_BASE_URL=https://openrouter.ai/api/v1`; you can change `OPENAI_MODEL` there too.
+On macOS or Linux, use `python3` in place of `py` and `cp .env.example .env` to copy the template.
 
-```bash
+### Environment variables
+
+Edit `backend/.env`. The tracked template is [`backend/.env.example`](https://github.com/JASIK-hub/edu-insight/blob/main/backend/.env.example). Set `DATABASE_URL` to your Neon direct connection URL and retain its SSL query parameters.
+
+| Variable | Value or template default | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | Neon direct connection URL | Stores datasets and reports. |
+| `OPENAI_API_KEY` | Empty | Optional OpenRouter key. Without it, reports use the deterministic fallback. |
+| `OPENAI_BASE_URL` | `https://openrouter.ai/api/v1` | Provider endpoint. |
+| `OPENAI_MODEL` | `openrouter/free` | Model for optional recommendation action selection. |
+| `OPENAI_ENABLED` | `true` | Set to `false` to explicitly disable provider calls. |
+| `OPENAI_TIMEOUT` | `15` | Provider timeout in seconds. |
+| `OPENAI_MAX_RETRIES` | `0` | Provider retry limit. |
+| `ANALYSIS_STALE_SECONDS` | `120` | Report processing stale threshold in seconds. |
+| `MAX_UPLOAD_BYTES` | `10485760` | CSV upload limit of 10 MiB. |
+| `CORS_ORIGINS` | `http://localhost:3000,http://localhost:5173` | Comma-separated frontend origins. |
+
+The backend loads `backend/.env` and gives process environment variables precedence. Keep the real connection URL and provider key out of version control. On Render, set secrets in the service environment.
+
+From `backend/`, after configuring the database:
+
+```powershell
 py -m alembic upgrade head
 py seed.py
 py -m uvicorn app.main:app --reload
 ```
 
-Run these commands from `backend/`. On systems where `python` points to a real Python installation, replace `py` with `python`. From the repository root, the server command is `py -m uvicorn app.main:app --app-dir backend --reload`.
+The seed script loads synthetic assessments for a demo. Open [Swagger UI](http://127.0.0.1:8000/docs) or check [the health endpoint](http://127.0.0.1:8000/api/health). To run the examples below against your local service, set `EDU_API_BASE=http://127.0.0.1:8000`.
 
-Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) or check [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health). The seed script imports `backend/data/synthetic_assessments.csv` once. The database URL is normalized to the Psycopg 3 SQLAlchemy dialect; retain Neon's SSL query parameters.
+Run the backend test suite from `backend/` with `py -m unittest discover -s tests -v`.
 
-## CSV to report
+## Try the API
 
-The CSV must be UTF-8 with these required columns:
-
-```csv
-student_id,topic,textbook,score,max_score,assessment_date,class_id,grade
-s1,Algebra,Book A,4,10,2026-01-01,7A,7
-s2,Geometry,Book B,8,10,2026-01-02,7A,7
-```
-
-The first five columns are required; the remaining columns are optional. Scores must satisfy `0 <= score <= max_score` and `max_score > 0`. See the [data dictionary](docs/data-dictionary.md) for details.
-
-1. `POST /api/datasets/upload` with multipart field `file`. Keep the returned `dataset_id`.
-2. `GET /api/datasets/{dataset_id}/analytics` for chart data. Optional filters: `grade`, `textbook`, `topic`, and `subject`.
-3. `POST /api/curriculum/optimize` with actual topic names and a `current_hours` map, for example `{"dataset_id": 1, "current_hours": {"Algebra": 8, "Geometry": 6}, "minimum_hours": 3}`.
-4. `POST /api/recommendations/analyze` with `{"dataset_id": 1, "language": "ru", "optimization": <complete optimize response>, "data_quality": {}}`. The `optimization` field is optional.
-5. Retrieve the saved report at `GET /api/datasets/{dataset_id}/report`.
-
-Use real topic names from `GET /api/analytics/topics?dataset_id=1`; examples will not match every dataset. Reports are cached per dataset and request. No raw CSV or individual student records are sent to OpenRouter.
-
-**Current data limits:** the CSV schema has no subject or per-question answer counts. `available_filters.subjects` and `topic_performance` are empty, with warnings in the analytics response. A subject filter cannot match records until the upload schema includes a subject field.
-
-## Development
+Download the [synthetic sample CSV](https://github.com/vcffff/edu-insight/blob/main/docs/samples/single-student.csv) as `single-student.csv`. You can run these requests in Bash or use the interactive API docs.
 
 ```bash
-cd backend
-py -m unittest discover -s tests -v
+EDU_API_BASE=https://edu-insight-bciy.onrender.com
+curl --fail-with-body "$EDU_API_BASE/api/health"
+
+curl --fail-with-body -X POST "$EDU_API_BASE/api/datasets/upload" \
+  -F 'file=@single-student.csv;type=text/csv'
 ```
 
-## Deploy on Render
-
-The repository includes [`render.yaml`](render.yaml). For an existing Render web service, set the **Build Command** to `pip install -r requirements.txt` and the **Start Command** to:
+Set `EDU_DATASET_ID` to the integer returned by the upload. Check its status before requesting analytics.
 
 ```bash
-python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT
+EDU_DATASET_ID=3 # Replace 3 with the ID from your upload.
+curl --fail-with-body "$EDU_API_BASE/api/datasets/$EDU_DATASET_ID/status"
+curl --fail-with-body "$EDU_API_BASE/api/datasets/$EDU_DATASET_ID/analytics"
 ```
 
-Set the health check path to `/api/health`. Add `DATABASE_URL` in Render's environment settings; add `OPENAI_API_KEY` only if OpenRouter is enabled. Run `cd backend && python -m alembic upgrade head` before using a new database. The Render start command must not include `--reload`.
+The sample contains one synthetic student and three assessments. The normalized scores are **20%**, **30%** and **20%**, giving an overall average of about **23.3%**. This is useful for verifying the workflow. School-wide conclusions require a representative dataset.
 
-The API is a modular FastAPI monolith: `storage`, `analytics`, `curriculum`, and `explanations` live under `backend/app/`. PostgreSQL migrations live under `backend/alembic/`. Read the [architecture](docs/architecture.md), [API contract](docs/api-contract.md), and [workflow](docs/workflow.md) for integration details.
+### Request a teaching plan
+
+Send the current hours using the topic names from the dataset. This example starts with **18 hours** across three topics, allows a change of up to four hours per topic, and sets a minimum of two hours.
+
+```bash
+curl --fail-with-body -X POST "$EDU_API_BASE/api/curriculum/optimize" \
+  -H 'Content-Type: application/json' \
+  --data-binary @- <<JSON
+{
+  "dataset_id": $EDU_DATASET_ID,
+  "current_hours": {"Algebra": 8, "Geometry": 6, "Statistics": 4},
+  "minimum_hours": 2,
+  "max_change_per_topic": 4,
+  "weak_threshold": 0.6
+}
+JSON
+```
+
+Compare the current and recommended hours and check that the totals match. If the optimizer finds no eligible transfer, an unchanged allocation can be a valid result. For an explanation that includes the new plan, pass the returned optimization as `optimization` to `POST /api/recommendations/analyze`, together with the same `dataset_id` and `language: "ru"`.
+
+## Architecture
+
+| Layer | Responsibility |
+| --- | --- |
+| **HTTP API** | Python and FastAPI expose the CSV, analytics, optimization and report endpoints. |
+| **Analytics** | Normalize assessment scores and aggregate the available evidence for the selected dataset. |
+| **Curriculum optimizer** | Apply deterministic, mastery-based allocation rules to the educator's current hours and planning constraints. |
+| **Reporting** | Build and store structured reports. OpenRouter can select approved recommendation actions, with a deterministic fallback. Numeric evidence comes from the analytics and optimizer. |
+
+The frontend's **Live API** mode uses this contract. Its offline demo runs in the browser and is a separate data source.
+
+## Responsible use and current scope
+
+- Upload anonymized assessment data. The upload workflow does not automatically remove personal identifiers.
+- Check sample size and comparability before interpreting textbook or school differences.
+- Missing dates can limit trend data. The current CSV schema has no subject column, so subject filtering cannot match uploaded records. Raw scores and maximum scores do not necessarily describe counts of correct and incorrect answers.
+- Recommendations support educator review. The API does not predict learning gains or publish a timetable.
+- The documented contract has no authentication or plan-storage endpoints. Keep sensitive student records out of the demo deployment.
+
+## Verification
+
+1. Confirm that the health route responds and the sample upload yields a dataset ID.
+2. Check status, then compare the analytics response with the expected sample scores.
+3. Submit a current-hour allocation and check the returned total, per-topic minimum and change limits.
+4. Generate a report for the same dataset and verify that it explains the plan and flags sample limitations.
