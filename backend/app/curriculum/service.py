@@ -30,17 +30,18 @@ def _validate_hours(hours: dict[str, int], label: str) -> None:
 
 def optimize(request: OptimizeRequest, topics: TopicsOut) -> OptimizeOut:
     """Transfer hours toward lower mastery while preserving total and limits."""
-    current = request.current_hours
-    _validate_hours(current, "current_hours")
+    # Work in integer half-hour units to preserve the budget exactly.
+    current = {name: round(hours * 2) for name, hours in request.current_hours.items()}
     mastery = _validate_topics(set(current), topics)
     total = sum(current.values())
-    minimum = request.minimum_hours
-    limit = request.max_change_per_topic
+    minimum = round(request.minimum_hours * 2)
+    limit = round(request.max_change_per_topic * 2)
     if total < minimum * len(current):
         raise HTTPException(status_code=422, detail="Total hours cannot satisfy minimum_hours for every topic")
 
-    lower = {name: max(minimum, hours - limit) for name, hours in current.items()}
-    upper = {name: hours + limit for name, hours in current.items()}
+    locked = set(request.locked_topics)
+    lower = {name: hours if name in locked else max(minimum, hours - limit) for name, hours in current.items()}
+    upper = {name: hours if name in locked else hours + limit for name, hours in current.items()}
     if any(lower[name] > upper[name] for name in current):
         raise HTTPException(status_code=422, detail="minimum_hours conflicts with max_change_per_topic")
     if sum(lower.values()) > total:
@@ -72,9 +73,9 @@ def optimize(request: OptimizeRequest, topics: TopicsOut) -> OptimizeOut:
     rows = [
         HourAllocation(
             topic=name,
-            current_hours=current[name],
-            recommended_hours=allocation[name],
-            change=allocation[name] - current[name],
+            current_hours=current[name] / 2,
+            recommended_hours=allocation[name] / 2,
+            change=(allocation[name] - current[name]) / 2,
             mastery=mastery[name],
             priority=1 - mastery[name],
         )
@@ -82,7 +83,7 @@ def optimize(request: OptimizeRequest, topics: TopicsOut) -> OptimizeOut:
     ]
     return OptimizeOut(
         dataset_id=topics.dataset_id,
-        total_hours=total,
+        total_hours=total / 2,
         allocations=rows,
         method="Deterministic priority-weighted hour transfer; priority = 1 - mastery",
     )

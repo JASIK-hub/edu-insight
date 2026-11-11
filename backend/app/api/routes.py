@@ -143,7 +143,8 @@ def textbooks(session: DbSession, dataset_id: int | None = None, subject: str | 
 @router.post("/curriculum/optimize", response_model=OptimizeOut)
 def optimize(request: OptimizeRequest, session: DbSession) -> OptimizeOut:
     selected = _selected_id(session, request.dataset_id)
-    metrics = analytics.topics(session, selected, request.weak_threshold)
+    metrics = analytics.topics(session, selected, request.weak_threshold, request.subject,
+                               request.grade, request.textbook, request.topic)
     return curriculum.optimize(request, metrics)
 
 

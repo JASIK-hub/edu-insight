@@ -1,4 +1,5 @@
 from datetime import datetime
+import math
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -159,15 +160,28 @@ class OptimizeRequest(BaseModel):
     }]})
 
     dataset_id: int | None = None
-    current_hours: dict[str, int] = Field(min_length=1)
-    minimum_hours: int = Field(default=1, ge=0)
-    max_change_per_topic: int = Field(default=4, ge=0)
+    subject: str | None = None
+    grade: int | None = None
+    textbook: str | None = None
+    topic: str | None = None
+    current_hours: dict[str, float] = Field(min_length=1)
+    minimum_hours: float = Field(default=1, ge=0)
+    max_change_per_topic: float = Field(default=4, ge=0)
     weak_threshold: float = Field(default=.6, ge=0, le=1)
+    locked_topics: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_hours(self):
-        if any(not name.strip() or hours < 0 for name, hours in self.current_hours.items()):
-            raise ValueError("topic names must be nonempty and hours nonnegative")
+        if any(not name.strip() or not math.isfinite(hours) or hours < 0 or hours * 2 != round(hours * 2)
+               for name, hours in self.current_hours.items()):
+            raise ValueError("topic names must be nonempty and hours must be nonnegative half-hour increments")
+        if any(not math.isfinite(value) or value * 2 != round(value * 2)
+               for value in (self.minimum_hours, self.max_change_per_topic)):
+            raise ValueError("planning limits must use half-hour increments")
+        if len(set(self.locked_topics)) != len(self.locked_topics) or not set(self.locked_topics).issubset(self.current_hours):
+            raise ValueError("locked_topics must be unique topics in current_hours")
+        if any(self.current_hours[name] < self.minimum_hours for name in self.locked_topics):
+            raise ValueError("locked topics must meet minimum_hours")
         if sum(self.current_hours.values()) < self.minimum_hours * len(self.current_hours):
             raise ValueError("total hours cannot meet minimum_hours")
         return self
@@ -175,16 +189,16 @@ class OptimizeRequest(BaseModel):
 
 class HourAllocation(BaseModel):
     topic: str
-    current_hours: int
-    recommended_hours: int
-    change: int
+    current_hours: float
+    recommended_hours: float
+    change: float
     mastery: float
     priority: float
 
 
 class OptimizeOut(BaseModel):
     dataset_id: int | None
-    total_hours: int
+    total_hours: float
     allocations: list[HourAllocation]
     method: str
 
@@ -277,8 +291,8 @@ class AnalysisTextbook(BaseModel):
 
 class AnalysisHourExplanation(BaseModel):
     topic: str
-    current_hours: int
-    recommended_hours: int
+    current_hours: float
+    recommended_hours: float
     reason: str
 
 

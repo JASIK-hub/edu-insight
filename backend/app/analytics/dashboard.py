@@ -40,9 +40,8 @@ def dataset_analytics(session: Session, dataset_id: int, *, grade: int | None = 
             textbooks=sorted(str(value) for value in frame["textbook"].dropna().unique()),
             topics=sorted(str(value) for value in frame["topic"].dropna().unique()),
         )
-    if frame.empty or frame["subject"].isna().any():
-        warnings.append("Some assessments have no subject; subject filtering excludes those rows.")
-    warnings.append("Answer counts are not stored; topic_performance is unavailable.")
+    if not frame.empty and frame["subject"].isna().any():
+        warnings.append("У части оценочных записей не указан предмет; фильтр по предмету исключит эти строки.")
     if subject is not None:
         frame = frame.loc[frame["subject"] == subject]
     if grade is not None:
@@ -63,7 +62,7 @@ def dataset_analytics(session: Session, dataset_id: int, *, grade: int | None = 
         valid &= frame["score"].map(math.isfinite) & frame["max_score"].map(math.isfinite)
         invalid_count = int((~valid).sum())
         if invalid_count:
-            warnings.append(f"Excluded {invalid_count} invalid assessment records.")
+            warnings.append(f"Исключено некорректных оценочных записей: {invalid_count}.")
         frame = frame.loc[valid].copy()
 
     topic_mastery: list[TopicMasteryPoint] = []
@@ -93,7 +92,7 @@ def dataset_analytics(session: Session, dataset_id: int, *, grade: int | None = 
 
         dated = frame.loc[frame["assessment_date"].notna()]
         if len(dated) < len(frame):
-            warnings.append(f"Excluded {len(frame) - len(dated)} undated records from performance_trend.")
+            warnings.append(f"Из графика динамики исключено записей без даты: {len(frame) - len(dated)}.")
         for day, group in dated.groupby("assessment_date", sort=True):
             performance_trend.append(PerformanceTrendPoint(
                 assessment_date=day.isoformat(),
@@ -111,8 +110,6 @@ def dataset_analytics(session: Session, dataset_id: int, *, grade: int | None = 
             count = int(frame.loc[bins == label, "student_id"].nunique())
             if count:
                 score_distribution.append(ScoreDistributionPoint(score_range=str(label), students_count=count))
-        if frame["student_id"].duplicated().any():
-            warnings.append("A student may appear in multiple score ranges when they have multiple assessments.")
 
         # Each student belongs to exactly one range. Weight their own assessments
         # by possible points, matching the dashboard's score semantics.

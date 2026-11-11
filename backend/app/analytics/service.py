@@ -42,7 +42,9 @@ def overview(session: Session, dataset_id: int | None = None, subject: str | Non
 
 
 def topics(session: Session, dataset_id: int | None = None,
-           weak_threshold: float = 0.6, subject: str | None = None) -> TopicsOut:
+           weak_threshold: float = 0.6, subject: str | None = None,
+           grade: int | None = None, textbook: str | None = None,
+           topic: str | None = None) -> TopicsOut:
     if not 0 <= weak_threshold <= 1:
         raise ValueError("weak_threshold must be between 0 and 1")
     dataset = resolve_dataset(session, dataset_id)
@@ -58,6 +60,12 @@ def topics(session: Session, dataset_id: int | None = None,
         ).where(Assessment.dataset_id == dataset.id)
     if subject is not None:
         query = query.where(Assessment.subject == subject)
+    if grade is not None:
+        query = query.where(Assessment.grade == grade)
+    if textbook is not None:
+        query = query.where(Assessment.textbook == textbook)
+    if topic is not None:
+        query = query.where(Assessment.topic == topic)
     rows = session.execute(query.group_by(Assessment.topic)).all()
     metrics = [
         TopicMetric(topic=name, mastery=_mastery(earned, possible) or 0.0,
