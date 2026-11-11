@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.contracts import (
     DashboardFilters, DashboardOverview, DatasetAnalyticsOut,
-    PerformanceTrendPoint, ScoreDistributionPoint, TextbookComparisonPoint,
+    PerformanceTrendPoint, ScoreDistributionPoint, StudentAverageDistributionPoint, TextbookComparisonPoint,
     TopicMasteryPoint,
 )
 from app.storage.models import Assessment, Dataset
@@ -23,12 +23,12 @@ def dataset_analytics(session: Session, dataset_id: int, *, grade: int | None = 
         raise LookupError("Dataset not found")
 
     rows = session.execute(select(
-        Assessment.student_id, Assessment.topic, Assessment.textbook,
+        Assessment.student_id, Assessment.topic, Assessment.subject, Assessment.textbook,
         Assessment.score, Assessment.max_score, Assessment.assessment_date,
         Assessment.grade,
     ).where(Assessment.dataset_id == dataset_id)).all()
     frame = pd.DataFrame(rows, columns=[
-        "student_id", "topic", "textbook", "score", "max_score",
+        "student_id", "topic", "subject", "textbook", "score", "max_score",
         "assessment_date", "grade",
     ])
     warnings: list[str] = []
@@ -36,16 +36,15 @@ def dataset_analytics(session: Session, dataset_id: int, *, grade: int | None = 
     if not frame.empty:
         filters = DashboardFilters(
             grades=sorted(int(value) for value in frame["grade"].dropna().unique()),
-            subjects=[],
+            subjects=sorted(str(value) for value in frame["subject"].dropna().unique()),
             textbooks=sorted(str(value) for value in frame["textbook"].dropna().unique()),
             topics=sorted(str(value) for value in frame["topic"].dropna().unique()),
         )
-    warnings.append("Subject is not stored in the current CSV schema; subject filtering is unavailable.")
+    if frame.empty or frame["subject"].isna().any():
+        warnings.append("Some assessments have no subject; subject filtering excludes those rows.")
     warnings.append("Answer counts are not stored; topic_performance is unavailable.")
     if subject is not None:
-        # There is no subject column. An explicit filter cannot match any records.
-        frame = frame.iloc[0:0]
-        warnings.append("Requested subject cannot be matched because subject data is unavailable.")
+        frame = frame.loc[frame["subject"] == subject]
     if grade is not None:
         frame = frame.loc[frame["grade"] == grade]
     if textbook is not None:
@@ -70,6 +69,7 @@ def dataset_analytics(session: Session, dataset_id: int, *, grade: int | None = 
     topic_mastery: list[TopicMasteryPoint] = []
     performance_trend: list[PerformanceTrendPoint] = []
     score_distribution: list[ScoreDistributionPoint] = []
+    student_average_distribution: list[StudentAverageDistributionPoint] = []
     textbook_comparison: list[TextbookComparisonPoint] = []
     total_students = 0
     average_score = None
@@ -81,6 +81,8 @@ def dataset_analytics(session: Session, dataset_id: int, *, grade: int | None = 
             topic_mastery.append(TopicMasteryPoint(
                 topic=str(name), score=round(float(group["score"].sum() / group["max_score"].sum() * 100), 2),
                 student_count=int(group["student_id"].nunique()),
+                sample_size=len(group),
+                below_target_count=int((group["score"] / group["max_score"] < 0.75).sum()),
             ))
         for (book, name), group in frame.groupby(["textbook", "topic"], sort=True):
             textbook_comparison.append(TextbookComparisonPoint(
@@ -112,14 +114,30 @@ def dataset_analytics(session: Session, dataset_id: int, *, grade: int | None = 
         if frame["student_id"].duplicated().any():
             warnings.append("A student may appear in multiple score ranges when they have multiple assessments.")
 
+        # Each student belongs to exactly one range. Weight their own assessments
+        # by possible points, matching the dashboard's score semantics.
+        student_totals = frame.groupby("student_id")[["score", "max_score"]].sum()
+        student_percentages = student_totals["score"] / student_totals["max_score"] * 100
+        student_bins = pd.cut(
+            student_percentages,
+            bins=[-0.001, 60, 75, 85, 100.001],
+            labels=["<60", "60–74", "75–84", "≥85"],
+            right=False,
+        )
+        for label in student_bins.cat.categories:
+            student_average_distribution.append(StudentAverageDistributionPoint(
+                score_range=str(label), students_count=int((student_bins == label).sum()),
+            ))
+
     return DatasetAnalyticsOut(
         dataset_id=dataset_id, generated_at=datetime.now(timezone.utc),
         overview=DashboardOverview(
-            total_students=total_students, average_score=average_score,
+            total_students=total_students, total_observations=len(frame), average_score=average_score,
             total_topics=len(topic_mastery),
             critical_topics=sum(item.score < 60 for item in topic_mastery),
         ),
         topic_mastery=topic_mastery, performance_trend=performance_trend,
-        score_distribution=score_distribution, textbook_comparison=textbook_comparison,
+        score_distribution=score_distribution, student_average_distribution=student_average_distribution,
+        textbook_comparison=textbook_comparison,
         topic_performance=[], data_quality_warnings=warnings, available_filters=filters,
     )

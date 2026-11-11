@@ -29,6 +29,7 @@ class Assessment(Base):
     dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True)
     student_id: Mapped[str] = mapped_column(String(255), nullable=False)
     topic: Mapped[str] = mapped_column(String(255), nullable=False)
+    subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     textbook: Mapped[str] = mapped_column(String(255), nullable=False)
     score: Mapped[float] = mapped_column(Float, nullable=False)
     max_score: Mapped[float] = mapped_column(Float, nullable=False)
@@ -36,6 +37,22 @@ class Assessment(Base):
     class_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     grade: Mapped[int | None] = mapped_column(Integer, nullable=True)
     dataset: Mapped[Dataset] = relationship(back_populates="assessments")
+
+
+class ItemResponse(Base):
+    __tablename__ = "item_responses"
+    __table_args__ = (
+        Index("ix_item_responses_dataset_topic_skill", "dataset_id", "topic", "skill"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    topic: Mapped[str] = mapped_column(String(255), nullable=False)
+    subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    skill: Mapped[str] = mapped_column(String(255), nullable=False)
+    item_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_correct: Mapped[bool] = mapped_column(nullable=False)
 
 
 class AnalysisReport(Base):

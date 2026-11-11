@@ -83,6 +83,16 @@ Run the backend test suite from `backend/` with `py -m unittest discover -s test
 
 Download the [synthetic sample CSV](https://github.com/vcffff/edu-insight/blob/main/docs/samples/single-student.csv) as `single-student.csv`. You can run these requests in Bash or use the interactive API docs.
 
+For subject-specific analysis, add `subject` to the assessment CSV. For example:
+
+```csv
+student_id,subject,topic,textbook,score,max_score,assessment_date,class_id,grade
+s1,Математика,Дроби,Учебник А,6,10,2026-09-01,7А,7
+s2,История,Древний мир,Учебник Б,8,10,2026-09-01,7А,7
+```
+
+Select the subject in Live API to filter topic charts and generate a report from that subject's rows. The optional item-response CSV also accepts `subject` and requires it when the same student and topic occur in multiple subjects.
+
 ```bash
 EDU_API_BASE=https://edu-insight-bciy.onrender.com
 curl --fail-with-body "$EDU_API_BASE/api/health"
@@ -136,7 +146,7 @@ The frontend's **Live API** mode uses this contract. Its offline demo runs in th
 
 - Upload anonymized assessment data. The upload workflow does not automatically remove personal identifiers.
 - Check sample size and comparability before interpreting textbook or school differences.
-- Missing dates can limit trend data. The current CSV schema has no subject column, so subject filtering cannot match uploaded records. Raw scores and maximum scores do not necessarily describe counts of correct and incorrect answers.
+- Missing dates can limit trend data. Add an optional `subject` column to the assessment CSV to filter topics and generate reports for one subject. Raw scores and maximum scores do not necessarily describe counts of correct and incorrect answers.
 - Recommendations support educator review. The API does not predict learning gains or publish a timetable.
 - The documented contract has no authentication or plan-storage endpoints. Keep sensitive student records out of the demo deployment.
 

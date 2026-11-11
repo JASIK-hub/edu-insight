@@ -1,5 +1,6 @@
-"""The backend owns every fact; AI can only choose a vetted action code."""
+"""Backend owns facts; AI may propose bounded teaching steps as hypotheses."""
 
+import asyncio
 import json
 import logging
 from typing import Literal
@@ -11,7 +12,7 @@ from app.config import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_ENABLED, OPENAI_M
 from app.contracts import (AnalysisCurriculum, AnalysisEvidence, AnalysisFinding,
     AnalysisHourExplanation, AnalysisRecommendation, AnalysisRequest, AnalysisSummary,
     AnalysisTextbook, AnalysisTopic, EduInsightAnalysisResponse, OptimizeOut,
-    OverviewOut, TextbooksOut, TopicsOut)
+    OverviewOut, SkillMetric, TextbooksOut, TopicsOut)
 from app.explanations.service import _safe_facts
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,9 @@ class ActionChoice(BaseModel):
     model_config = ConfigDict(extra="forbid")
     topic_ref: str
     action_code: ActionCode
+    focus_areas: list[str]
+    classroom_step: str
+    check_task: str
 
 
 class ActionChoices(BaseModel):
@@ -33,7 +37,7 @@ WORDS = {
     "ru": {
         "title": "Успеваемость по темам", "weak_summary": "Темы с низким освоением требуют внимания.",
         "good_summary": "Слабых тем в предоставленных данных не выявлено.", "empty": "Данных для выводов недостаточно.",
-        "mastery": "Уровень освоения", "records": "Оценочных записей", "students": "Учащихся",
+        "mastery": "Уровень освоения", "records": "Оценочных записей", "students": "Учащихся", "subject": "Предмет",
         "weak": "Освоение ниже заданного порога", "textbook_limit": "Наблюдаемые различия не доказывают преимущество учебника: возможны отбор учащихся и различия в исходной подготовке.",
         "no_hours": "Распределение часов не предоставлено.", "hours": "Показано рассчитанное backend распределение часов с сохранением общего бюджета.",
         "hour_reason": "Основание: измеренное освоение и рассчитанный приоритет.", "no_data": "Оценочные записи отсутствуют.",
@@ -54,7 +58,7 @@ WORDS = {
     },
     "en": {
         "title": "Performance by topic", "weak_summary": "Weak topics need attention.", "good_summary": "No weak topics were identified.", "empty": "Insufficient data for conclusions.",
-        "mastery": "Mastery", "records": "Assessment records", "students": "Students", "weak": "Mastery is below the threshold",
+        "mastery": "Mastery", "records": "Assessment records", "students": "Students", "subject": "Subject", "weak": "Mastery is below the threshold",
         "textbook_limit": "Observed differences do not establish textbook superiority; selection and prior knowledge may differ.",
         "no_hours": "No hour allocation was supplied.", "hours": "The backend allocation preserves the total hours budget.",
         "hour_reason": "Based on measured mastery and computed priority.", "no_data": "No assessment records were supplied.",
@@ -75,7 +79,7 @@ WORDS = {
     },
     "kk": {
         "title": "Тақырыптар бойынша үлгерім", "weak_summary": "Меңгеруі төмен тақырыптар назар аударуды қажет етеді.", "good_summary": "Әлсіз тақырыптар анықталмады.", "empty": "Қорытынды жасауға дерек жеткіліксіз.",
-        "mastery": "Меңгеру деңгейі", "records": "Бағалау жазбалары", "students": "Оқушылар", "weak": "Меңгеру деңгейі шектен төмен",
+        "mastery": "Меңгеру деңгейі", "records": "Бағалау жазбалары", "students": "Оқушылар", "subject": "Пән", "weak": "Меңгеру деңгейі шектен төмен",
         "textbook_limit": "Бақыланған айырмашылық оқулықтың артықшылығын дәлелдемейді; іріктеу мен бастапқы дайындық әртүрлі болуы мүмкін.",
         "no_hours": "Сағаттар бөлінісі берілмеген.", "hours": "Backend бөлген жалпы сағат көлемі сақталған.",
         "hour_reason": "Өлшенген меңгеру деңгейі мен есептелген басымдыққа негізделген.", "no_data": "Бағалау жазбалары жоқ.",
@@ -97,32 +101,81 @@ WORDS = {
 }
 
 
+def _percent(value: float | None, language: str) -> str:
+    if value is None:
+        return "—"
+    formatted = f"{value * 100:.1f}".rstrip("0").rstrip(".")
+    return f"{formatted.replace('.', ',') if language in {'ru', 'kk'} else formatted}%"
+
+
+def _measured_skill(topic: str, skills: list[SkillMetric]) -> SkillMetric | None:
+    matches = [skill for skill in skills if skill.topic == topic and skill.student_count >= 5]
+    return min(matches, key=lambda skill: (skill.accuracy_percent, -skill.student_count)) if matches else None
+
+
+def _skill_sentence(skill: SkillMetric | None, language: str) -> str:
+    if skill is None:
+        return {"ru": "Ответы по заданиям для этой темы не загружены; конкретный пробел пока не измерен.",
+                "en": "Item responses for this topic were not uploaded; a specific gap has not been measured.",
+                "kk": "Бұл тақырып бойынша тапсырма жауаптары жүктелмеген; нақты олқылық әлі өлшенген жоқ."}[language]
+    correct = skill.correct_answers
+    total = skill.correct_answers + skill.incorrect_answers
+    return {"ru": f"По навыку «{skill.skill}» верны {correct} из {total} ответов ({_percent(skill.accuracy_percent / 100, language)}); проверены {skill.student_count} учащихся.",
+            "en": f"For the skill '{skill.skill}', {correct} of {total} answers were correct ({_percent(skill.accuracy_percent / 100, language)}) across {skill.student_count} students.",
+            "kk": f"«{skill.skill}» дағдысы бойынша {total} жауаптың {correct}-і дұрыс ({_percent(skill.accuracy_percent / 100, language)}); {skill.student_count} оқушы тексерілді."}[language]
+
+
+def _safe_choice(choice: ActionChoice) -> bool:
+    return (1 <= len(choice.focus_areas) <= 3
+            and len(set(choice.focus_areas)) == len(choice.focus_areas)
+            and all(text.strip() and len(text) <= limit and not any(ch.isdigit() for ch in text) and "%" not in text
+                    for text, limit in ([(focus, 120) for focus in choice.focus_areas]
+                                        + [(choice.classroom_step, 300), (choice.check_task, 300)])))
+
+
+def _focus_sentence(choice: ActionChoice | None, language: str) -> str:
+    if choice is None:
+        return ""
+    areas = ", ".join(f"«{focus}»" for focus in choice.focus_areas)
+    return {"ru": f" ИИ предлагает проверить: {areas}. Это варианты для диагностики, а не измеренные ошибки.",
+            "en": f"AI suggests checking: {areas}. These are diagnostic ideas, not measured errors.",
+            "kk": f"ЖИ тексеруді ұсынады: {areas}. Бұлар өлшенген қателер емес, диагностикаға арналған ұсыныстар."}[language]
+
+
 def _build_report(request: AnalysisRequest, overview: OverviewOut, topics: TopicsOut,
                   textbooks: TextbooksOut, optimization: OptimizeOut | None,
-                  quality: dict, actions: dict[str, ActionCode]) -> EduInsightAnalysisResponse:
+                  quality: dict, actions: dict[str, ActionChoice],
+                  skills: list[SkillMetric] | None = None) -> EduInsightAnalysisResponse:
     w = WORDS[request.language]
+    skills = skills or []
     weak = [item for item in topics.topics if item.is_weak]
     findings = [AnalysisFinding(
         id=f"finding_{i:03d}", title=item.topic,
-        description=(f"{w['mastery']}: {item.mastery}; {w['records']}: {item.sample_size}; "
-                     f"{w['students']}: {item.student_count}. "
-                     + w["weak_detail"].format(threshold=topics.weak_threshold) + " "
-                     + w["topic_scope"].format(records=item.sample_size, students=item.student_count)),
+        description=(f"{w['mastery']}: {_percent(item.mastery, request.language)}; "
+                     f"{w['records']}: {item.sample_size}; {w['students']}: {item.student_count}. "
+                     f"{w['weak']} ({_percent(topics.weak_threshold, request.language)}). "
+                     + _skill_sentence(_measured_skill(item.topic, skills), request.language)
+                     + _focus_sentence(actions.get(item.topic), request.language)),
         severity="high", topic=item.topic,
         evidence=[AnalysisEvidence(metric="mastery", value=item.mastery, unit="ratio"),
-                  AnalysisEvidence(metric="sample_size", value=item.sample_size, unit="records")],
+                  AnalysisEvidence(metric="sample_size", value=item.sample_size, unit="records")]
+                 + ([AnalysisEvidence(metric="skill_accuracy", value=_measured_skill(item.topic, skills).accuracy_percent, unit="percent"),
+                     AnalysisEvidence(metric="incorrect_answers", value=_measured_skill(item.topic, skills).incorrect_answers, unit="answers")]
+                    if _measured_skill(item.topic, skills) else []),
     ) for i, item in enumerate(weak, 1)]
     topic_analysis = [AnalysisTopic(
         topic=item.topic, status="needs_attention" if item.is_weak else "satisfactory",
-        interpretation=(f"{w['mastery']}: {item.mastery}; {w['records']}: {item.sample_size}; "
+        interpretation=(f"{w['mastery']}: {_percent(item.mastery, request.language)}; {w['records']}: {item.sample_size}; "
                         f"{w['students']}: {item.student_count}. "
-                        + w["weak_detail" if item.is_weak else "good_detail"].format(threshold=topics.weak_threshold)
-                        + " " + w["topic_scope"].format(records=item.sample_size, students=item.student_count)),
+                        + w["weak_detail" if item.is_weak else "good_detail"].format(threshold=_percent(topics.weak_threshold, request.language))
+                        + " " + w["topic_scope"].format(records=item.sample_size, students=item.student_count)
+                        + " " + _skill_sentence(_measured_skill(item.topic, skills), request.language)
+                        + _focus_sentence(actions.get(item.topic), request.language)),
         main_concern=w["weak"] if item.is_weak else None,
     ) for item in topics.topics]
     textbook_analysis = [AnalysisTextbook(
         textbook=item.textbook,
-        observation=(f"{w['mastery']}: {item.mastery}; {w['records']}: {item.sample_size}; "
+        observation=(f"{w['mastery']}: {_percent(item.mastery, request.language)}; {w['records']}: {item.sample_size}; "
                      f"{w['students']}: {item.student_count}. "
                      + w["textbook_detail"].format(topics=item.topic_count)),
         limitations=[w["textbook_limit"]],
@@ -130,19 +183,32 @@ def _build_report(request: AnalysisRequest, overview: OverviewOut, topics: Topic
     hours = [] if optimization is None else [AnalysisHourExplanation(
         topic=item.topic, current_hours=item.current_hours,
         recommended_hours=item.recommended_hours,
-        reason=(f"{w['hour_reason']} {w['mastery']}: {item.mastery}; {w['priority']}: {item.priority}. "
+        reason=(f"{w['hour_reason']} {w['mastery']}: {_percent(item.mastery, request.language)}; {w['priority']}: {round(item.priority, 2)}. "
                 + w["hour_detail"].format(current=item.current_hours,
                     recommended=item.recommended_hours, change=item.change)),
     ) for item in optimization.allocations]
     recommendations = []
     for i, item in enumerate(weak, 1):
-        title, action = w["actions"][actions.get(item.topic, "diagnose_gaps")]
+        choice = actions.get(item.topic)
+        title, action = w["actions"][choice.action_code if choice else "diagnose_gaps"]
+        measured = _measured_skill(item.topic, skills)
+        if choice:
+            detail = _focus_sentence(choice, request.language).strip() + " " + ({
+                "ru": f"На уроке: {choice.classroom_step} Проверка: {choice.check_task}",
+                "en": f"In class: {choice.classroom_step} Check: {choice.check_task}",
+                "kk": f"Сабақта: {choice.classroom_step} Тексеру: {choice.check_task}"}[request.language])
+        elif measured:
+            detail = ({"ru": f"Начните с навыка «{measured.skill}»: разберите одно типовое задание, затем дайте новое задание на тот же навык и сравните ответы.",
+                       "en": f"Start with '{measured.skill}': review one representative item, then give a new item on the same skill and compare responses.",
+                       "kk": f"«{measured.skill}» дағдысынан бастаңыз: бір үлгі тапсырманы талдап, сол дағдыға жаңа тапсырма беріп, жауаптарды салыстырыңыз."}[request.language])
+        else:
+            detail = w["action_detail"]
         recommendations.append(AnalysisRecommendation(
             id=f"rec_{i:03d}", title=title, priority="high",
-            action=action + " " + w["action_detail"],
+            action=action + " " + detail,
             related_topics=[item.topic],
-            evidence=[f"{item.topic}: {w['mastery']} {item.mastery}; {w['records']} {item.sample_size}; "
-                      f"{w['students']} {item.student_count}."],
+            evidence=[f"{item.topic}: {w['mastery']} {_percent(item.mastery, request.language)}; {w['records']} {item.sample_size}; "
+                      f"{w['students']} {item.student_count}."] + ([_skill_sentence(measured, request.language)] if measured else []),
         ))
     limitations = [w["sample_limit"]]
     if textbooks.textbooks:
@@ -153,9 +219,9 @@ def _build_report(request: AnalysisRequest, overview: OverviewOut, topics: Topic
         limitations.append(w["no_hours"])
     summary = w["empty"] if overview.observation_count == 0 else (
         w["weak_summary"] if weak else w["good_summary"]
-    ) + " " + w["scope"].format(records=overview.observation_count,
+    ) + (f" {w['subject']}: {request.subject}." if request.subject else "") + " " + w["scope"].format(records=overview.observation_count,
         students=overview.student_count, topics=overview.topic_count,
-        mastery=overview.overall_mastery)
+        mastery=_percent(overview.overall_mastery, request.language))
     return EduInsightAnalysisResponse(
         executive_summary=AnalysisSummary(
             title=w["title"], summary=summary,
@@ -174,32 +240,58 @@ def _build_report(request: AnalysisRequest, overview: OverviewOut, topics: Topic
 
 
 async def analyze(request: AnalysisRequest, overview: OverviewOut, topics: TopicsOut,
-                  textbooks: TextbooksOut) -> EduInsightAnalysisResponse:
+                  textbooks: TextbooksOut, skills: list[SkillMetric] | None = None,
+                  grades: list[int] | None = None) -> EduInsightAnalysisResponse:
     quality = _safe_facts(request.data_quality)
+    skills = skills or []
     weak = [item for item in topics.topics if item.is_weak]
-    actions: dict[str, ActionCode] = {}
+    actions: dict[str, ActionChoice] = {}
     if weak and OPENAI_ENABLED and OPENAI_API_KEY:
         topic_refs = {f"t{index}": item.topic for index, item in enumerate(weak, 1)}
-        payload = {"weak_topics": [{"topic_ref": f"t{index}", "mastery": item.mastery,
-                   "sample_size": item.sample_size} for index, item in enumerate(weak, 1)],
+        payload = {"subject": request.subject, "grades": grades or [], "language": request.language,
+                   "weak_topics": [{"topic_ref": f"t{index}", "topic": item.topic,
+                                    "mastery_percent": round(item.mastery * 100, 1),
+                                    "sample_size": item.sample_size,
+                                    "measured_skills": [{"skill": skill.skill,
+                                                         "accuracy_percent": skill.accuracy_percent,
+                                                         "correct_answers": skill.correct_answers,
+                                                         "incorrect_answers": skill.incorrect_answers,
+                                                         "student_count": skill.student_count}
+                                                        for skill in sorted((s for s in skills if s.topic == item.topic and s.student_count >= 5),
+                                                                            key=lambda s: s.accuracy_percent)[:3]]}
+                                   for index, item in enumerate(weak, 1)],
                    "allowed_action_codes": ["review_materials", "diagnose_gaps", "align_assessment"]}
         try:
             client = AsyncOpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL,
                                  timeout=OPENAI_TIMEOUT, max_retries=OPENAI_MAX_RETRIES)
-            response = await client.responses.create(
-                model=OPENAI_MODEL,
-                instructions=("Choose one allowed action_code for each weak topic. "
-                              "Use only supplied opaque topic_ref values. "
-                              "Return only JSON. Do not create topics, metrics, hours, or prose."),
-                input=json.dumps(payload, ensure_ascii=False),
-                text={"format": {"type": "json_schema", "name": "EduInsightActionChoices",
-                                 "strict": True, "schema": ActionChoices.model_json_schema()}},
-            )
-            selected = ActionChoices.model_validate_json(response.output_text)
-            if len(selected.actions) == len(topic_refs) and {item.topic_ref for item in selected.actions} == set(topic_refs):
-                actions = {topic_refs[item.topic_ref]: item.action_code for item in selected.actions}
-            else:
-                logger.warning("AI action choices did not match weak topics; using defaults")
+            for attempt in range(2):
+                try:
+                    response = await asyncio.wait_for(client.responses.create(
+                        model=OPENAI_MODEL,
+                        instructions=("You are an educational assistant for teachers. For each weak topic, return exactly one action. "
+                                      "Use the supplied topic_ref and one allowed action_code. Write focus_areas, classroom_step, and check_task in the requested language. "
+                                      "The teacher may provide only a broad topic such as Algebra. Use your pedagogical knowledge to propose two or three distinct, plausible prerequisite or related subtopics in focus_areas, beyond merely repeating the uploaded topic. "
+                                      "Respect the supplied subject and grade levels when available; do not suggest material clearly beyond that curriculum level. "
+                                      "These are your own teaching hypotheses to test, not observed errors or established causes. "
+                                      "When measured_skills are present, include the weakest measured skill among the focus areas and add relevant related areas. "
+                                      "classroom_step must give a concrete brief teaching activity; check_task must give a concrete new diagnostic task. "
+                                      "Do not claim a specific misconception or cause was observed unless it is directly in the supplied skill names and counts. "
+                                      "Do not invent scores, sample sizes, hours, student identities, textbook effects, or learning gains. "
+                                      "Do not put numbers or percentages in generated text fields. Return only JSON."),
+                        input=json.dumps(payload, ensure_ascii=False),
+                        text={"format": {"type": "json_schema", "name": "EduInsightActionChoices",
+                                         "strict": True, "schema": ActionChoices.model_json_schema()}},
+                    ), timeout=OPENAI_TIMEOUT + 5)
+                    selected = ActionChoices.model_validate_json(response.output_text)
+                    if (len(selected.actions) != len(topic_refs)
+                            or {item.topic_ref for item in selected.actions} != set(topic_refs)
+                            or not all(_safe_choice(item) for item in selected.actions)):
+                        raise ValueError("AI suggestions did not match the requested topics or text limits")
+                    actions = {topic_refs[item.topic_ref]: item for item in selected.actions}
+                    break
+                except Exception as exc:
+                    if attempt == 1:
+                        logger.warning("AI suggestions unavailable after retry (%s); using defaults", type(exc).__name__)
         except Exception as exc:
             logger.warning("AI action selection unavailable (%s); using defaults", type(exc).__name__)
-    return _build_report(request, overview, topics, textbooks, request.optimization, quality, actions)
+    return _build_report(request, overview, topics, textbooks, request.optimization, quality, actions, skills)

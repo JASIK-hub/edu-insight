@@ -64,6 +64,33 @@
         }
       }
     },
+    "/api/datasets/{dataset_id}/items/upload": {
+      "post": {
+        "operationId": "upload_item_responses",
+        "parameters": [{"name": "dataset_id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "requestBody": {"required": true, "content": {"multipart/form-data": {"schema": {"type": "object", "required": ["file"], "properties": {"file": {"type": "string", "format": "binary"}}}}}},
+        "responses": {
+          "200": {"description": "Item responses imported", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ItemImportOut"}}}},
+          "404": {"$ref": "#/components/responses/Error"},
+          "413": {"$ref": "#/components/responses/Error"},
+          "422": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/datasets/{dataset_id}/skills": {
+      "get": {
+        "operationId": "get_skill_analytics",
+        "parameters": [
+          {"name": "dataset_id", "in": "path", "required": true, "schema": {"type": "integer"}},
+          {"name": "topic", "in": "query", "required": false, "schema": {"type": "string"}},
+          {"name": "subject", "in": "query", "required": false, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"description": "Aggregate skill diagnostics", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SkillAnalyticsOut"}}}},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
     "/api/datasets/{dataset_id}/status": {
       "get": {
         "operationId": "get_dataset_status",
@@ -96,6 +123,45 @@
         }
       }
     },
+    "/api/analytics/overview": {
+      "get": {
+        "operationId": "get_analytics_overview",
+        "parameters": [{"name": "dataset_id", "in": "query", "required": false, "schema": {"type": "integer"}}, {"name": "subject", "in": "query", "required": false, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Dataset overview", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/OverviewOut"}}}}, "404": {"$ref": "#/components/responses/Error"}}
+      }
+    },
+    "/api/analytics/topics": {
+      "get": {
+        "operationId": "get_analytics_topics",
+        "parameters": [
+          {"name": "dataset_id", "in": "query", "required": false, "schema": {"type": "integer"}},
+          {"name": "weak_threshold", "in": "query", "required": false, "schema": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.6}},
+          {"name": "subject", "in": "query", "required": false, "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "Topic metrics", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TopicsOut"}}}}, "404": {"$ref": "#/components/responses/Error"}, "422": {"$ref": "#/components/responses/Error"}}
+      }
+    },
+    "/api/analytics/textbooks": {
+      "get": {
+        "operationId": "get_analytics_textbooks",
+        "parameters": [{"name": "dataset_id", "in": "query", "required": false, "schema": {"type": "integer"}}, {"name": "subject", "in": "query", "required": false, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Textbook metrics", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TextbooksOut"}}}}, "404": {"$ref": "#/components/responses/Error"}}
+      }
+    },
+    "/api/curriculum/simulate": {
+      "post": {
+        "operationId": "simulate_curriculum",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SimulateRequest"}}}},
+        "responses": {"200": {"description": "Scenario estimate", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SimulateOut"}}}}, "404": {"$ref": "#/components/responses/Error"}, "422": {"$ref": "#/components/responses/Error"}}
+      }
+    },
+    "/api/recommendations/explain": {
+      "post": {
+        "operationId": "explain_recommendation",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExplainRequest"}}}},
+        "responses": {"200": {"description": "Explanation or deterministic fallback", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExplainOut"}}}}, "422": {"$ref": "#/components/responses/Error"}}
+      }
+    },
     "/api/recommendations/analyze": {
       "post": {
         "operationId": "analyze_recommendations",
@@ -122,7 +188,7 @@
       "DatasetStatusOut": {"type": "object", "required": ["dataset_id", "status", "report_id"], "properties": {"dataset_id": {"type": "integer"}, "status": {"$ref": "#/components/schemas/DatasetStatus"}, "report_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]}}},
       "DatasetAnalyticsOut": {
         "type": "object",
-        "required": ["dataset_id", "generated_at", "overview", "topic_mastery", "performance_trend", "score_distribution", "textbook_comparison", "topic_performance", "data_quality_warnings", "available_filters"],
+        "required": ["dataset_id", "generated_at", "overview", "topic_mastery", "performance_trend", "score_distribution", "student_average_distribution", "textbook_comparison", "topic_performance", "data_quality_warnings", "available_filters"],
         "properties": {
           "dataset_id": {"type": "integer"},
           "generated_at": {"type": "string", "format": "date-time"},
@@ -130,23 +196,28 @@
           "topic_mastery": {"type": "array", "items": {"$ref": "#/components/schemas/TopicMasteryPoint"}},
           "performance_trend": {"type": "array", "items": {"$ref": "#/components/schemas/PerformanceTrendPoint"}},
           "score_distribution": {"type": "array", "items": {"$ref": "#/components/schemas/ScoreDistributionPoint"}},
+          "student_average_distribution": {"type": "array", "items": {"$ref": "#/components/schemas/StudentAverageDistributionPoint"}},
           "textbook_comparison": {"type": "array", "items": {"$ref": "#/components/schemas/TextbookComparisonPoint"}},
           "topic_performance": {"type": "array", "items": {"$ref": "#/components/schemas/TopicPerformancePoint"}},
           "data_quality_warnings": {"type": "array", "items": {"type": "string"}},
           "available_filters": {"$ref": "#/components/schemas/DashboardFilters"}
         }
       },
-      "DashboardOverview": {"type": "object", "required": ["total_students", "average_score", "total_topics", "critical_topics"], "properties": {"total_students": {"type": "integer"}, "average_score": {"anyOf": [{"type": "number"}, {"type": "null"}]}, "total_topics": {"type": "integer"}, "critical_topics": {"type": "integer"}}},
-      "TopicMasteryPoint": {"type": "object", "required": ["topic", "score", "student_count"], "properties": {"topic": {"type": "string"}, "score": {"type": "number"}, "student_count": {"type": "integer"}}},
+      "ItemImportOut": {"type": "object", "required": ["dataset_id", "row_count", "skill_count"], "properties": {"dataset_id": {"type": "integer"}, "row_count": {"type": "integer"}, "skill_count": {"type": "integer"}}},
+      "SkillMetric": {"type": "object", "required": ["topic", "skill", "correct_answers", "incorrect_answers", "student_count", "item_count", "accuracy_percent", "status", "suggested_action"], "properties": {"subject": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null}, "topic": {"type": "string"}, "skill": {"type": "string"}, "correct_answers": {"type": "integer"}, "incorrect_answers": {"type": "integer"}, "student_count": {"type": "integer"}, "item_count": {"type": "integer"}, "accuracy_percent": {"type": "number", "minimum": 0, "maximum": 100}, "status": {"type": "string", "enum": ["insufficient_data", "needs_attention", "on_target"]}, "suggested_action": {"type": "string"}}},
+      "SkillAnalyticsOut": {"type": "object", "required": ["dataset_id", "item_response_count", "skills"], "properties": {"dataset_id": {"type": "integer"}, "item_response_count": {"type": "integer"}, "skills": {"type": "array", "items": {"$ref": "#/components/schemas/SkillMetric"}}}},
+      "DashboardOverview": {"type": "object", "required": ["total_students", "total_observations", "average_score", "total_topics", "critical_topics"], "properties": {"total_students": {"type": "integer"}, "total_observations": {"type": "integer"}, "average_score": {"anyOf": [{"type": "number"}, {"type": "null"}]}, "total_topics": {"type": "integer"}, "critical_topics": {"type": "integer"}}},
+      "TopicMasteryPoint": {"type": "object", "required": ["topic", "score", "student_count", "sample_size", "below_target_count"], "properties": {"topic": {"type": "string"}, "score": {"type": "number"}, "student_count": {"type": "integer"}, "sample_size": {"type": "integer"}, "below_target_count": {"type": "integer"}}},
       "PerformanceTrendPoint": {"type": "object", "required": ["assessment_date", "score", "student_count"], "properties": {"assessment_date": {"type": "string", "format": "date"}, "score": {"type": "number"}, "student_count": {"type": "integer"}}},
       "ScoreDistributionPoint": {"type": "object", "required": ["score_range", "students_count"], "properties": {"score_range": {"type": "string"}, "students_count": {"type": "integer"}}},
+      "StudentAverageDistributionPoint": {"type": "object", "required": ["score_range", "students_count"], "properties": {"score_range": {"type": "string"}, "students_count": {"type": "integer"}}},
       "TextbookComparisonPoint": {"type": "object", "required": ["textbook", "topic", "average_score", "student_count"], "properties": {"textbook": {"type": "string"}, "topic": {"type": "string"}, "average_score": {"type": "number"}, "student_count": {"type": "integer"}}},
       "TopicPerformancePoint": {"type": "object", "required": ["topic", "correct_answers", "incorrect_answers"], "properties": {"topic": {"type": "string"}, "correct_answers": {"type": "integer"}, "incorrect_answers": {"type": "integer"}}},
       "DashboardFilters": {"type": "object", "required": ["grades", "subjects", "textbooks", "topics"], "properties": {"grades": {"type": "array", "items": {"type": "integer"}}, "subjects": {"type": "array", "items": {"type": "string"}}, "textbooks": {"type": "array", "items": {"type": "string"}}, "topics": {"type": "array", "items": {"type": "string"}}}},
       "OptimizeRequest": {"type": "object", "required": ["current_hours"], "properties": {"dataset_id": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": null}, "current_hours": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "integer", "minimum": 0}, "description": "Keys must be actual topic names in the selected dataset."}, "minimum_hours": {"type": "integer", "minimum": 0, "default": 1}, "max_change_per_topic": {"type": "integer", "minimum": 0, "default": 4}, "weak_threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.6}}},
       "HourAllocation": {"type": "object", "required": ["topic", "current_hours", "recommended_hours", "change", "mastery", "priority"], "properties": {"topic": {"type": "string"}, "current_hours": {"type": "integer"}, "recommended_hours": {"type": "integer"}, "change": {"type": "integer"}, "mastery": {"type": "number", "minimum": 0, "maximum": 1}, "priority": {"type": "number", "minimum": 0, "maximum": 1}}},
       "OptimizeOut": {"type": "object", "required": ["dataset_id", "total_hours", "allocations", "method"], "properties": {"dataset_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]}, "total_hours": {"type": "integer"}, "allocations": {"type": "array", "items": {"$ref": "#/components/schemas/HourAllocation"}}, "method": {"type": "string"}}},
-      "AnalysisRequest": {"type": "object", "properties": {"dataset_id": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": null}, "language": {"type": "string", "enum": ["en", "ru", "kk"], "default": "ru"}, "school_context": {"anyOf": [{"type": "string", "maxLength": 2000}, {"type": "null"}], "default": null}, "optimization": {"anyOf": [{"$ref": "#/components/schemas/OptimizeOut"}, {"type": "null"}], "default": null}, "data_quality": {"type": "object", "additionalProperties": true, "default": {}}}},
+      "AnalysisRequest": {"type": "object", "properties": {"dataset_id": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": null}, "subject": {"anyOf": [{"type": "string", "maxLength": 255}, {"type": "null"}], "default": null}, "language": {"type": "string", "enum": ["en", "ru", "kk"], "default": "ru"}, "school_context": {"anyOf": [{"type": "string", "maxLength": 2000}, {"type": "null"}], "default": null}, "optimization": {"anyOf": [{"$ref": "#/components/schemas/OptimizeOut"}, {"type": "null"}], "default": null}, "data_quality": {"type": "object", "additionalProperties": true, "default": {}}}},
       "EduInsightAnalysisResponse": {"type": "object", "required": ["executive_summary", "key_findings", "topic_analysis", "textbook_analysis", "curriculum_explanation", "recommendations", "limitations", "data_quality_warnings", "generated_language"], "properties": {"executive_summary": {"$ref": "#/components/schemas/AnalysisSummary"}, "key_findings": {"type": "array", "items": {"$ref": "#/components/schemas/AnalysisFinding"}}, "topic_analysis": {"type": "array", "items": {"$ref": "#/components/schemas/AnalysisTopic"}}, "textbook_analysis": {"type": "array", "items": {"$ref": "#/components/schemas/AnalysisTextbook"}}, "curriculum_explanation": {"$ref": "#/components/schemas/AnalysisCurriculum"}, "recommendations": {"type": "array", "items": {"$ref": "#/components/schemas/AnalysisRecommendation"}}, "limitations": {"type": "array", "items": {"type": "string"}}, "data_quality_warnings": {"type": "array", "items": {"type": "string"}}, "generated_language": {"type": "string", "enum": ["en", "ru", "kk"]}}},
       "AnalysisSummary": {"type": "object", "required": ["title", "summary", "overall_status", "key_findings_count"], "properties": {"title": {"type": "string"}, "summary": {"type": "string"}, "overall_status": {"type": "string", "enum": ["needs_attention", "satisfactory", "insufficient_data"]}, "key_findings_count": {"type": "integer"}}},
       "AnalysisEvidence": {"type": "object", "required": ["metric", "value"], "properties": {"metric": {"type": "string"}, "value": {}, "unit": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null}}},
@@ -156,7 +227,17 @@
       "AnalysisHourExplanation": {"type": "object", "required": ["topic", "current_hours", "recommended_hours", "reason"], "properties": {"topic": {"type": "string"}, "current_hours": {"type": "integer"}, "recommended_hours": {"type": "integer"}, "reason": {"type": "string"}}},
       "AnalysisCurriculum": {"type": "object", "required": ["summary", "total_hours_preserved", "topic_explanations"], "properties": {"summary": {"type": "string"}, "total_hours_preserved": {"anyOf": [{"type": "boolean"}, {"type": "null"}]}, "topic_explanations": {"type": "array", "items": {"$ref": "#/components/schemas/AnalysisHourExplanation"}}}},
       "AnalysisRecommendation": {"type": "object", "required": ["id", "title", "priority", "action", "related_topics", "evidence"], "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "priority": {"type": "string", "enum": ["high", "medium", "low"]}, "action": {"type": "string"}, "related_topics": {"type": "array", "items": {"type": "string"}}, "evidence": {"type": "array", "items": {"type": "string"}}}},
-      "StoredReportOut": {"type": "object", "required": ["id", "dataset_id", "status", "report", "created_at"], "properties": {"id": {"type": "integer"}, "dataset_id": {"type": "integer"}, "status": {"const": "completed"}, "report": {"$ref": "#/components/schemas/EduInsightAnalysisResponse"}, "created_at": {"type": "string", "format": "date-time"}}}
+      "StoredReportOut": {"type": "object", "required": ["id", "dataset_id", "status", "report", "created_at"], "properties": {"id": {"type": "integer"}, "dataset_id": {"type": "integer"}, "status": {"const": "completed"}, "report": {"$ref": "#/components/schemas/EduInsightAnalysisResponse"}, "created_at": {"type": "string", "format": "date-time"}}},
+      "OverviewOut": {"type": "object", "required": ["dataset_id", "observation_count", "student_count", "topic_count", "textbook_count", "overall_mastery"], "properties": {"dataset_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]}, "observation_count": {"type": "integer"}, "student_count": {"type": "integer"}, "topic_count": {"type": "integer"}, "textbook_count": {"type": "integer"}, "overall_mastery": {"anyOf": [{"type": "number"}, {"type": "null"}], "description": "Ratio from 0 to 1, unlike dashboard percentage scores."}}},
+      "TopicMetric": {"type": "object", "required": ["topic", "mastery", "sample_size", "student_count", "is_weak"], "properties": {"topic": {"type": "string"}, "mastery": {"type": "number", "minimum": 0, "maximum": 1}, "sample_size": {"type": "integer"}, "student_count": {"type": "integer"}, "is_weak": {"type": "boolean"}}},
+      "TopicsOut": {"type": "object", "required": ["dataset_id", "weak_threshold", "topics"], "properties": {"dataset_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]}, "weak_threshold": {"type": "number", "minimum": 0, "maximum": 1}, "topics": {"type": "array", "items": {"$ref": "#/components/schemas/TopicMetric"}}}},
+      "TextbookMetric": {"type": "object", "required": ["textbook", "mastery", "sample_size", "student_count", "topic_count"], "properties": {"textbook": {"type": "string"}, "mastery": {"type": "number", "minimum": 0, "maximum": 1}, "sample_size": {"type": "integer"}, "student_count": {"type": "integer"}, "topic_count": {"type": "integer"}}},
+      "TextbooksOut": {"type": "object", "required": ["dataset_id", "textbooks"], "properties": {"dataset_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]}, "textbooks": {"type": "array", "items": {"$ref": "#/components/schemas/TextbookMetric"}}}},
+      "SimulateRequest": {"type": "object", "required": ["current_hours", "proposed_hours"], "properties": {"dataset_id": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": null}, "current_hours": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "integer", "minimum": 0}}, "proposed_hours": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "integer", "minimum": 0}}, "sensitivity": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.15}}},
+      "TopicProjection": {"type": "object", "required": ["topic", "current_hours", "proposed_hours", "mastery_before", "mastery_after", "delta"], "properties": {"topic": {"type": "string"}, "current_hours": {"type": "integer"}, "proposed_hours": {"type": "integer"}, "mastery_before": {"type": "number"}, "mastery_after": {"type": "number"}, "delta": {"type": "number"}}},
+      "SimulateOut": {"type": "object", "required": ["dataset_id", "projections", "overall_before", "overall_after", "assumption"], "properties": {"dataset_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]}, "projections": {"type": "array", "items": {"$ref": "#/components/schemas/TopicProjection"}}, "overall_before": {"type": "number"}, "overall_after": {"type": "number"}, "assumption": {"type": "string"}}},
+      "ExplainRequest": {"type": "object", "required": ["kind", "facts"], "properties": {"kind": {"type": "string", "enum": ["analytics", "optimization", "simulation"]}, "facts": {"type": "object", "additionalProperties": true}, "locale": {"type": "string", "default": "en"}}},
+      "ExplainOut": {"type": "object", "required": ["explanation", "source", "model"], "properties": {"explanation": {"type": "string"}, "source": {"type": "string", "enum": ["openai", "openrouter", "fallback"]}, "model": {"anyOf": [{"type": "string"}, {"type": "null"}]}}}
     }
   }
 }

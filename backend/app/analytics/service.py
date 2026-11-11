@@ -17,14 +17,13 @@ def _mastery(earned: float | None, possible: float | None) -> float | None:
     return min(1.0, max(0.0, float(earned or 0) / float(possible)))
 
 
-def overview(session: Session, dataset_id: int | None = None) -> OverviewOut:
+def overview(session: Session, dataset_id: int | None = None, subject: str | None = None) -> OverviewOut:
     dataset = resolve_dataset(session, dataset_id)
     if dataset is None:
         return OverviewOut(dataset_id=None, observation_count=0, student_count=0,
                            topic_count=0, textbook_count=0, overall_mastery=None)
 
-    row = session.execute(
-        select(
+    query = select(
             func.count(Assessment.id),
             func.count(distinct(Assessment.student_id)),
             func.count(distinct(Assessment.topic)),
@@ -32,7 +31,9 @@ def overview(session: Session, dataset_id: int | None = None) -> OverviewOut:
             func.sum(Assessment.score),
             func.sum(Assessment.max_score),
         ).where(Assessment.dataset_id == dataset.id)
-    ).one()
+    if subject is not None:
+        query = query.where(Assessment.subject == subject)
+    row = session.execute(query).one()
     return OverviewOut(
         dataset_id=dataset.id,
         observation_count=row[0], student_count=row[1], topic_count=row[2],
@@ -41,22 +42,23 @@ def overview(session: Session, dataset_id: int | None = None) -> OverviewOut:
 
 
 def topics(session: Session, dataset_id: int | None = None,
-           weak_threshold: float = 0.6) -> TopicsOut:
+           weak_threshold: float = 0.6, subject: str | None = None) -> TopicsOut:
     if not 0 <= weak_threshold <= 1:
         raise ValueError("weak_threshold must be between 0 and 1")
     dataset = resolve_dataset(session, dataset_id)
     if dataset is None:
         return TopicsOut(dataset_id=None, weak_threshold=weak_threshold, topics=[])
 
-    rows = session.execute(
-        select(
+    query = select(
             Assessment.topic,
             func.sum(Assessment.score),
             func.sum(Assessment.max_score),
             func.count(Assessment.id),
             func.count(distinct(Assessment.student_id)),
-        ).where(Assessment.dataset_id == dataset.id).group_by(Assessment.topic)
-    ).all()
+        ).where(Assessment.dataset_id == dataset.id)
+    if subject is not None:
+        query = query.where(Assessment.subject == subject)
+    rows = session.execute(query.group_by(Assessment.topic)).all()
     metrics = [
         TopicMetric(topic=name, mastery=_mastery(earned, possible) or 0.0,
                     sample_size=count, student_count=students,
@@ -67,21 +69,22 @@ def topics(session: Session, dataset_id: int | None = None,
     return TopicsOut(dataset_id=dataset.id, weak_threshold=weak_threshold, topics=metrics)
 
 
-def textbooks(session: Session, dataset_id: int | None = None) -> TextbooksOut:
+def textbooks(session: Session, dataset_id: int | None = None, subject: str | None = None) -> TextbooksOut:
     dataset = resolve_dataset(session, dataset_id)
     if dataset is None:
         return TextbooksOut(dataset_id=None, textbooks=[])
 
-    rows = session.execute(
-        select(
+    query = select(
             Assessment.textbook,
             func.sum(Assessment.score),
             func.sum(Assessment.max_score),
             func.count(Assessment.id),
             func.count(distinct(Assessment.student_id)),
             func.count(distinct(Assessment.topic)),
-        ).where(Assessment.dataset_id == dataset.id).group_by(Assessment.textbook)
-    ).all()
+        ).where(Assessment.dataset_id == dataset.id)
+    if subject is not None:
+        query = query.where(Assessment.subject == subject)
+    rows = session.execute(query.group_by(Assessment.textbook)).all()
     metrics = [
         TextbookMetric(textbook=name, mastery=_mastery(earned, possible) or 0.0,
                        sample_size=count, student_count=students, topic_count=topic_count)

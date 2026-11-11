@@ -1,7 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.analytics import service as analytics
@@ -9,7 +9,8 @@ from app.analytics.dashboard import dataset_analytics
 from app.contracts import (
     AnalysisRequest, DatasetAnalyticsOut, DatasetListOut, DatasetOut, DatasetStatusOut, EduInsightAnalysisResponse,
     ExplainOut, ExplainRequest, HealthOut,
-    OptimizeOut, OptimizeRequest, OverviewOut, SimulateOut, SimulateRequest,
+    ItemImportOut, OptimizeOut, OptimizeRequest, OverviewOut, SimulateOut, SimulateRequest,
+    SkillAnalyticsOut,
     StoredReportOut, TextbooksOut, TopicsOut,
 )
 from app.curriculum import service as curriculum
@@ -17,7 +18,9 @@ from app.explanations.service import explain
 from app.explanations.analysis import analyze
 from app.config import MAX_UPLOAD_BYTES
 from app.storage.database import get_session
+from app.storage.models import Assessment
 from app.storage.ingest import import_csv
+from app.services.item_diagnostics import import_item_responses, skill_analytics
 from app.storage.repository import (
     analysis_request_hash, complete_report, dataset_status, fail_report,
     latest_completed_report, list_datasets, reserve_report, resolve_dataset,
@@ -80,6 +83,30 @@ def get_dataset_analytics(dataset_id: int, session: DbSession,
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.post("/datasets/{dataset_id}/items/upload", response_model=ItemImportOut)
+async def upload_item_responses(dataset_id: int, session: DbSession, file: UploadFile = File(...)) -> ItemImportOut:
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=422, detail="A CSV file is required")
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds upload limit")
+    try:
+        return import_item_responses(session, dataset_id, content)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/datasets/{dataset_id}/skills", response_model=SkillAnalyticsOut)
+def get_skill_analytics(dataset_id: int, session: DbSession, topic: str | None = None,
+                        subject: str | None = None) -> SkillAnalyticsOut:
+    try:
+        return skill_analytics(session, dataset_id, topic, subject)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/datasets/{dataset_id}/report", response_model=StoredReportOut)
 def get_dataset_report(dataset_id: int, session: DbSession) -> StoredReportOut:
     status = dataset_status(session, dataset_id)
@@ -94,8 +121,8 @@ def get_dataset_report(dataset_id: int, session: DbSession) -> StoredReportOut:
 
 
 @router.get("/analytics/overview", response_model=OverviewOut)
-def overview(session: DbSession, dataset_id: int | None = None) -> OverviewOut:
-    return analytics.overview(session, _selected_id(session, dataset_id))
+def overview(session: DbSession, dataset_id: int | None = None, subject: str | None = None) -> OverviewOut:
+    return analytics.overview(session, _selected_id(session, dataset_id), subject)
 
 
 @router.get("/analytics/topics", response_model=TopicsOut)
@@ -103,13 +130,14 @@ def topics(
     session: DbSession,
     dataset_id: int | None = None,
     weak_threshold: Annotated[float, Query(ge=0, le=1)] = 0.6,
+    subject: str | None = None,
 ) -> TopicsOut:
-    return analytics.topics(session, _selected_id(session, dataset_id), weak_threshold)
+    return analytics.topics(session, _selected_id(session, dataset_id), weak_threshold, subject)
 
 
 @router.get("/analytics/textbooks", response_model=TextbooksOut)
-def textbooks(session: DbSession, dataset_id: int | None = None) -> TextbooksOut:
-    return analytics.textbooks(session, _selected_id(session, dataset_id))
+def textbooks(session: DbSession, dataset_id: int | None = None, subject: str | None = None) -> TextbooksOut:
+    return analytics.textbooks(session, _selected_id(session, dataset_id), subject)
 
 
 @router.post("/curriculum/optimize", response_model=OptimizeOut)
@@ -139,9 +167,15 @@ async def analyze_recommendation(request: AnalysisRequest, session: DbSession) -
     selected = _selected_id(session, request.dataset_id)
     if selected is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    overview_result = analytics.overview(session, selected)
-    topic_result = analytics.topics(session, selected)
-    textbook_result = analytics.textbooks(session, selected)
+    overview_result = analytics.overview(session, selected, request.subject)
+    topic_result = analytics.topics(session, selected, subject=request.subject)
+    textbook_result = analytics.textbooks(session, selected, request.subject)
+    skill_result = skill_analytics(session, selected, subject=request.subject)
+    grade_query = select(Assessment.grade).where(Assessment.dataset_id == selected,
+                                                 Assessment.grade.is_not(None)).distinct()
+    if request.subject is not None:
+        grade_query = grade_query.where(Assessment.subject == request.subject)
+    grades = sorted(session.scalars(grade_query).all())
     if request.optimization is not None:
         allocation = request.optimization
         topic_mastery = {topic.topic: topic.mastery for topic in topic_result.topics}
@@ -153,7 +187,7 @@ async def analyze_recommendation(request: AnalysisRequest, session: DbSession) -
             raise HTTPException(status_code=422, detail="Optimization topics do not match dataset topics")
         if any(row.current_hours < 0 or row.recommended_hours < 0 or row.change != row.recommended_hours - row.current_hours or abs(row.mastery - topic_mastery[row.topic]) > 1e-9 for row in allocation.allocations):
             raise HTTPException(status_code=422, detail="Optimization metrics do not match backend data")
-    request_hash = analysis_request_hash(request, selected)
+    request_hash = analysis_request_hash(request, selected, skill_result.skills)
     state, report = reserve_report(session, selected, request_hash)
     if state == "cached":
         return EduInsightAnalysisResponse.model_validate(report.report_data)
@@ -162,7 +196,7 @@ async def analyze_recommendation(request: AnalysisRequest, session: DbSession) -
     if state == "missing":
         raise HTTPException(status_code=404, detail="Dataset not found")
     try:
-        result = await analyze(request, overview_result, topic_result, textbook_result)
+        result = await analyze(request, overview_result, topic_result, textbook_result, skill_result.skills, grades)
         # Validate the complete report before persistence, including deterministic fallback.
         result = EduInsightAnalysisResponse.model_validate(result)
         complete_report(session, report.id, result)

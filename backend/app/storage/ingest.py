@@ -11,7 +11,7 @@ from .models import Assessment, Dataset
 from .repository import _to_out
 
 REQUIRED = {"student_id", "topic", "textbook", "score", "max_score"}
-OPTIONAL = {"assessment_date", "class_id", "grade"}
+OPTIONAL = {"assessment_date", "class_id", "grade", "subject"}
 
 
 class CSVValidationError(ValueError):
@@ -73,9 +73,13 @@ def _parse(content: bytes) -> list[dict[str, object]]:
             class_id = (row.get("class_id") or "").strip() or None
             if class_id and len(class_id) > 255:
                 raise CSVValidationError(f"row {line}: class_id exceeds 255 characters")
+            subject = (row.get("subject") or "").strip() or None
+            if subject and len(subject) > 255:
+                raise CSVValidationError(f"row {line}: subject exceeds 255 characters")
             rows.append({
                 "student_id": _text(row, "student_id", line),
                 "topic": _text(row, "topic", line),
+                "subject": subject,
                 "textbook": _text(row, "textbook", line),
                 "score": score,
                 "max_score": max_score,

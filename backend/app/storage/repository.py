@@ -27,9 +27,11 @@ def resolve_dataset(session: Session, dataset_id: int | None = None) -> Dataset 
     return session.scalar(select(Dataset).order_by(Dataset.created_at.desc(), Dataset.id.desc()).limit(1))
 
 
-def analysis_request_hash(request: AnalysisRequest, dataset_id: int) -> str:
+def analysis_request_hash(request: AnalysisRequest, dataset_id: int, skills: list | None = None) -> str:
     payload = request.model_copy(update={"dataset_id": dataset_id}).model_dump(mode="json")
-    payload["report_version"] = 2
+    payload["report_version"] = 5
+    if skills:
+        payload["skills"] = [skill.model_dump(mode="json") for skill in skills]
     # The context is accepted for compatibility but is not used in the report.
     payload.pop("school_context", None)
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

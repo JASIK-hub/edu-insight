@@ -142,6 +142,30 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(self.client.get(f"/api/datasets/{dataset_id}/status").json()["status"], "completed")
 
+    def test_invalid_ai_response_retries_then_uses_own_subtopic_ideas(self):
+        dataset_id = self.upload()["dataset_id"]
+        calls = []
+        class Responses:
+            async def create(self, **kwargs):
+                calls.append(kwargs)
+                class Response:
+                    output_text = ('{"actions":[{"topic_ref":"t1","action_code":"diagnose_gaps",'
+                                   '"focus_areas":["basic operations","linear equations"],'
+                                   '"classroom_step":"Work through an example together.",'
+                                   '"check_task":"Give a new equation to solve."}]}' if len(calls) == 2 else '{"actions":[]}')
+                return Response()
+        class Client:
+            def __init__(self, **kwargs):
+                self.responses = Responses()
+        with patch("app.explanations.analysis.OPENAI_ENABLED", True), \
+             patch("app.explanations.analysis.OPENAI_API_KEY", "fake"), \
+             patch("app.explanations.analysis.AsyncOpenAI", Client):
+            response = self.analyze(dataset_id)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("basic operations", response.json()["key_findings"][0]["description"])
+        self.assertIn("new equation", response.json()["recommendations"][0]["action"])
+
     def test_provider_receives_only_aggregate_topic_data(self):
         dataset_id = self.upload()["dataset_id"]
         seen = {}
@@ -149,7 +173,7 @@ class WorkflowTests(unittest.TestCase):
             async def create(self, **kwargs):
                 seen.update(kwargs)
                 class Response:
-                    output_text = '{"actions":[{"topic_ref":"t1","action_code":"review_materials"}]}'
+                    output_text = '{"actions":[{"topic_ref":"t1","action_code":"review_materials","focus_areas":["basic operations","linear equations"],"classroom_step":"Model a worked example in pairs.","check_task":"Give one new equation to solve."}]}'
                 return Response()
         class Client:
             def __init__(self, **kwargs):
@@ -164,7 +188,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("student_id", seen["input"])
         self.assertNotIn("s1", seen["input"])
         self.assertNotIn("Book A", seen["input"])
-        self.assertNotIn("Algebra", seen["input"])
+        self.assertIn("Algebra", seen["input"])
+        self.assertIn("basic operations", response.json()["recommendations"][0]["action"])
+        self.assertIn("linear equations", response.json()["key_findings"][0]["description"])
 
     def test_invalid_upload_does_not_create_dataset(self):
         response = self.client.post("/api/datasets/upload", files={

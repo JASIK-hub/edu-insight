@@ -60,6 +60,7 @@ class TextbooksOut(BaseModel):
 
 class DashboardOverview(BaseModel):
     total_students: int
+    total_observations: int
     average_score: float | None
     total_topics: int
     critical_topics: int
@@ -69,6 +70,8 @@ class TopicMasteryPoint(BaseModel):
     topic: str
     score: float
     student_count: int
+    sample_size: int
+    below_target_count: int
 
 
 class PerformanceTrendPoint(BaseModel):
@@ -78,6 +81,11 @@ class PerformanceTrendPoint(BaseModel):
 
 
 class ScoreDistributionPoint(BaseModel):
+    score_range: str
+    students_count: int
+
+
+class StudentAverageDistributionPoint(BaseModel):
     score_range: str
     students_count: int
 
@@ -109,10 +117,36 @@ class DatasetAnalyticsOut(BaseModel):
     topic_mastery: list[TopicMasteryPoint]
     performance_trend: list[PerformanceTrendPoint]
     score_distribution: list[ScoreDistributionPoint]
+    student_average_distribution: list[StudentAverageDistributionPoint]
     textbook_comparison: list[TextbookComparisonPoint]
     topic_performance: list[TopicPerformancePoint]
     data_quality_warnings: list[str]
     available_filters: DashboardFilters
+
+
+class ItemImportOut(BaseModel):
+    dataset_id: int
+    row_count: int
+    skill_count: int
+
+
+class SkillMetric(BaseModel):
+    subject: str | None = None
+    topic: str
+    skill: str
+    correct_answers: int
+    incorrect_answers: int
+    student_count: int
+    item_count: int
+    accuracy_percent: float
+    status: Literal["insufficient_data", "needs_attention", "on_target"]
+    suggested_action: str
+
+
+class SkillAnalyticsOut(BaseModel):
+    dataset_id: int
+    item_response_count: int
+    skills: list[SkillMetric]
 
 
 class OptimizeRequest(BaseModel):
@@ -205,6 +239,7 @@ class ExplainOut(BaseModel):
 
 class AnalysisRequest(BaseModel):
     dataset_id: int | None = None
+    subject: str | None = Field(default=None, max_length=255)
     language: Literal["en", "ru", "kk"] = "ru"
     school_context: str | None = Field(default=None, max_length=2000)
     optimization: OptimizeOut | None = None
